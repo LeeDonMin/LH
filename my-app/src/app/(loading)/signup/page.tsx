@@ -1,6 +1,9 @@
 'use client';
+
 import {CardWithForm} from "@/components/card-form";
 import { useState } from "react";
+import instance from "@/lib/axios";
+import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -8,7 +11,8 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
-  const handleSubmit = () => {
+  const router = useRouter(); // ✅ router 사용 선언
+  const handleSubmit = async () => {
     if (!email || !password || !confirmPassword || !name) {
       setError('모든 필드를 입력해주세요.');
       return;
@@ -20,11 +24,16 @@ export default function LoginPage() {
     }
 
     setError('');
-    // 회원가입 로직 실행
-    alert('회원가입 성공!');
-    console.log('email', email);
+
+    try {
+      await instance.post('/auth/signup', { email, password, name });
+      alert('회원가입 성공!');
+      router.push('/login'); // ✅ 로그인 페이지로 이동
+    } catch (error) {
+      console.error(error);
+      setError('회원가입 중 오류가 발생했습니다.');
+    }
   };
-  
   return (
     <div className="flex h-screen items-center justify-center">
       <CardWithForm items ={{title: '회원가입', description: '회원가입을 위해 정보를 입력해주세요.', leftLabel: '로그인', rightLabel: '회원가입', handelSubmit: handleSubmit}}>

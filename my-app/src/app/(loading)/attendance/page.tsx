@@ -15,7 +15,9 @@ import {
   DrawerTitle,
   DrawerTrigger,
 } from "@/components/ui/drawer";
-
+import { attend, getAttendance } from "@/lib/axios";
+import { getToken } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 // 출결 상태별 색상 클래스
 function getStatusColor(status: string) {
   switch (status) {
@@ -31,22 +33,50 @@ function getStatusColor(status: string) {
 }
 
 // 출결 판단 함수
-function determineAttendanceStatus(date: Date): string {
-  const hour = date.getHours();
-  const minute = date.getMinutes();
-  const totalMinutes = hour * 60 + minute;
 
-  if (totalMinutes < 9 * 60) return '출석';
-  if (totalMinutes < 10 * 60) return '지각';
-  return '결석';
-}
+type ApiAttendanceItem = {
+  attendanceId: number;
+  date: string; // "2025-05-30"
+  memberId: number;
+  status: string; // API 상태값, 예: "ABSENT"
+  studentName: string;
+  time: string; // "17:29:43.434"
+};
 
 type AttendanceRecord = {
   status: string;
   time: string;
 };
+function transformAttendanceData(apiData: ApiAttendanceItem[]): Record<string, AttendanceRecord> {
+  const map: Record<string, AttendanceRecord> = {};
+  apiData.forEach(item => {
+    // status를 한글 등 원하는 형태로 변환할 수도 있음
+    let status = '';
+    switch (item.status) {
+      case 'ATTENDANCE':
+        status = '출석';
+        break;
+      case 'LATE':
+        status = '지각';
+        break;
+      case 'ABSENT':
+        status = '결석';
+        break;
+      default:
+        status = item.status; // 그대로 둠
+    }
+
+    map[item.date] = {
+      status,
+      time: item.time.split('.')[0], // 마이크로초 제거하고 시:분:초만 저장
+    };
+  });
+
+  return map;
+}
 
 export default function AttendanceCalendar() {
+  const router = useRouter();
   const [attendanceData, setAttendanceData] = useState<Record<string, AttendanceRecord>>({});
   const [selected, setSelected] = useState<Date|undefined>(new Date());
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -54,29 +84,59 @@ export default function AttendanceCalendar() {
   const [reason, setReason] = useState('');
   const [corrections, setCorrections] = useState<any[]>([]);
   // 시간 실시간 업데이트
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+ 
+useEffect(() => {
+  const fetchData = async () => {
+    const token = getToken();
+    if (!token) {
+      alert('로그인이 필요합니다.');
+      router.push('/login');
+      return;
+    }
 
-const handleSaveTodayAttendance = () => {
+    try {
+      const apiResponse = await getAttendance(2025, 5); // 응답은 배열이라고 가정
+      const transformed = transformAttendanceData(apiResponse);
+      setAttendanceData(transformed);
+    } catch (error) {
+      console.error('출결 데이터 가져오기 실패:', error);
+      alert('출결 데이터를 가져오는 데 실패했습니다.');
+    }
+  };
+  fetchData();
+
+  const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+  return () => clearInterval(timer);
+}, [router]);
+const handleSaveTodayAttendance = async () => {
   const todayStr = currentTime.toLocaleDateString('sv-SE');
-  
-  // 이미 출결 기록이 있다면 알림만 띄우고 종료
-  if (attendanceData[todayStr]) {
-    alert(`${todayStr}에 이미 출석하셨습니다.`);
+  const token = getToken();
+
+  if (!token) {
+    alert('로그인이 필요합니다.');
+    const router = useRouter();
+    router.push('/login');
     return;
   }
 
-  const status = determineAttendanceStatus(currentTime);
-  const timeStr = currentTime.toLocaleTimeString();
+  try {
+    if (attendanceData[todayStr]) {
+      alert(`${todayStr}에 이미 출석하셨습니다.`);
+      return;
+    }
 
-  setAttendanceData(prev => ({
-    ...prev,
-    [todayStr]: { status, time: timeStr }
-  }));
+    // 서버에 출석 기록 요청
+    await attend();  // 서버가 현재 시간 기준으로 판단해서 저장
 
-  alert(`${todayStr}에 ${status}으로 저장되었습니다.`);
+    // 저장 후 최신 출석 정보 다시 가져오기
+    const updatedData = await getAttendance(currentTime.getFullYear(), currentTime.getMonth() + 1);
+    setAttendanceData(transformAttendanceData(updatedData));
+
+    alert(`${todayStr} 출석이 저장되었습니다.`);
+  } catch (error) {
+    console.error('출석 기록 저장 실패:', error);
+    alert('출석 기록 저장에 실패했습니다.');
+  }
 };
 
   const handleDayClick = (date?: Date) => {
